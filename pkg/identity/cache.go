@@ -131,6 +131,10 @@ func LookupIdentity(lbls labels.Labels) *Identity {
 // LookupReservedIdentityByLabels looks up a reserved identity by its labels and
 // returns it if found. Returns nil if not found.
 func LookupReservedIdentityByLabels(lbls labels.Labels) *Identity {
+	if identity := wellKnown.lookupByLabels(lbls); identity != nil {
+		return identity
+	}
+
 	for _, lbl := range lbls {
 		switch {
 		// If the set of labels contain a fixed identity then and exists in
@@ -232,6 +236,22 @@ func AddUserDefinedNumericIdentitySet(m map[string]string) error {
 		ni, _ := ParseNumericIdentity(k)
 		AddUserDefinedNumericIdentity(ni, lbl)
 		AddReservedIdentity(ni, lbl)
+	}
+	return nil
+}
+
+// AddWellKnownIdentities the given wellKnownIdentities to map of reserved
+// identities. Returns ErrNotWellKnownIdentity if any of the identities does not
+// have an ID that belongs to the interval of well known identities.
+func AddWellKnownIdentities(identities wellKnownIdentities) error {
+	// Validate first
+	for id, wki := range identities {
+		if !IsWellKnownIdentity(id) {
+			return ErrNotWellKnownIdentity
+		}
+		// Pre-calculate sha
+		wki.identity.GetLabelsSHA256()
+		reservedIdentityCache[id] = wki.identity
 	}
 	return nil
 }
