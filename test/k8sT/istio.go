@@ -100,6 +100,7 @@ var _ = Describe("K8sIstioTest", func() {
 
 		_ = kubectl.Apply(helpers.DNSDeployment())
 
+		// Deploy the etcd operator
 		err := kubectl.DeployETCDOperator()
 		Expect(err).To(BeNil(), "Unable to deploy etcd operator")
 
