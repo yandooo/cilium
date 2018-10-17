@@ -2648,6 +2648,8 @@ func (e *Endpoint) InsertEvent() {
 // PolicyMap is unable to be dumped, or any update operation to the map fails.
 // Must be called with e.Mutex locked.
 func (e *Endpoint) syncPolicyMap() error {
+	e.getLogger().Debug("starting policymap sync")
+	defer e.getLogger().Debug("ending policymap sync")
 
 	if e.realizedMapState == nil {
 		e.realizedMapState = make(PolicyMapState)
