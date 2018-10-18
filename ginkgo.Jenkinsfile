@@ -79,7 +79,7 @@ pipeline {
             }
             steps {
                 sh 'cd ${TESTDIR}; K8S_VERSION=1.8 vagrant up --no-provision'
-                sh 'cd ${TESTDIR}; K8S_VERSION=1.12 vagrant up --no-provision'
+                sh 'cd ${TESTDIR}; CPUS=3 MEMORY=5120 K8S_VERSION=1.12 vagrant up --no-provision'
             }
         }
         stage('BDD-Test-PR') {
