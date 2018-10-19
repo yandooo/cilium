@@ -17,8 +17,11 @@ package k8sTest
 import (
 	"context"
 	"fmt"
+	"github.com/cilium/cilium/api/v1/models"
 	. "github.com/cilium/cilium/test/ginkgo-ext"
 	"github.com/cilium/cilium/test/helpers"
+	"strings"
+	"time"
 
 	. "github.com/onsi/gomega"
 )
@@ -82,6 +85,9 @@ var _ = Describe("K8sIstioTest", func() {
 		res.ExpectSuccess("unable to pull image %q onto node %q", imageName, vmName)
 	}
 
+	signalChan := make(chan struct{})
+	ticker := time.NewTicker(2 * time.Second)
+
 	BeforeAll(func() {
 		k8sVersion := helpers.GetCurrentK8SEnv()
 		switch k8sVersion {
@@ -141,6 +147,8 @@ var _ = Describe("K8sIstioTest", func() {
 	})
 
 	AfterAll(func() {
+		close(signalChan)
+		ticker.Stop()
 		By("Deleting the Istio resources")
 		_ = kubectl.Delete(istioYAMLPath)
 
@@ -164,6 +172,79 @@ var _ = Describe("K8sIstioTest", func() {
 			resourceYAMLPaths []string
 			policyPaths       []string
 		)
+
+		ciliumBackgroundInfo := func(signalChan chan struct{}) {
+
+			go func(signalChan chan struct{}) {
+				defer fmt.Println("exiting gofunc")
+				defer GinkgoRecover()
+				var getPodsErr error
+				var pods []string
+				// Only care about k8s2 because that's where endpoints keep going into
+				// not ready state.
+				ciliumPodK8s1, err := kubectl.GetCiliumPodOnNode(helpers.KubeSystemNamespace, helpers.K8s1)
+				Expect(err).To(BeNil(), "unable to get cilium pods")
+				ciliumPodK8s2, err := kubectl.GetCiliumPodOnNode(helpers.KubeSystemNamespace, helpers.K8s2)
+				Expect(err).To(BeNil(), "unable to get cilium pods")
+				for getPodsErr != nil || len(pods) == 0 {
+					pods, getPodsErr = kubectl.GetPodNames(helpers.DefaultNamespace, "app=details,version=v1")
+					time.Sleep(time.Millisecond * 500)
+					if getPodsErr != nil || len(pods) == 0 {
+						By("Details pod doesn't exist yet")
+					}
+				}
+				By("Checking number of details pods")
+				Expect(len(pods)).To(Equal(1), "unexpected number of details pods")
+				var detailsEp *models.Endpoint
+				skipOut := false
+				for !skipOut {
+					By("Checking if cilium endpoint for details pod is plumbed")
+					var endpointsK8s1 []models.Endpoint
+					_ = kubectl.CiliumEndpointsList(ciliumPodK8s1).Unmarshal(&endpointsK8s1)
+					for _, ep := range endpointsK8s1 {
+						By("Checking if pod name %s contains %s", ep.Status.ExternalIdentifiers.PodName, pods[0])
+						if strings.Contains(ep.Status.ExternalIdentifiers.PodName, pods[0]) {
+							detailsEp = &ep
+							skipOut = true
+						}
+					}
+
+					if skipOut {
+						continue
+					}
+					var endpointsK8s2 []models.Endpoint
+					_ = kubectl.CiliumEndpointsList(ciliumPodK8s2).Unmarshal(&endpointsK8s2)
+					for _, ep := range endpointsK8s2 {
+						By("Checking if pod name %s contains %s", ep.Status.ExternalIdentifiers.PodName, pods[0])
+						if strings.Contains(ep.Status.ExternalIdentifiers.PodName, pods[0]) {
+							detailsEp = &ep
+							skipOut = true
+						}
+					}
+					if !skipOut {
+						time.Sleep(time.Millisecond * 500)
+					}
+				}
+
+				Expect(detailsEp).ToNot(BeNil(), "details endpoint model is nil")
+				detailsEpID := detailsEp.ID
+				cmds := []string{fmt.Sprintf("cilium bpf policy get %d --numeric", detailsEpID), "cilium bpf ipcache list"}
+				By("running commands now")
+				for {
+					select {
+					case <-signalChan:
+						fmt.Println("received signalChan!")
+						return
+					case <-ticker.C:
+						for _, cmd := range cmds {
+							By("Executing command: %s", cmd)
+							res := kubectl.ExecPodCmd(helpers.KubeSystemNamespace, ciliumPodK8s2, cmd)
+							fmt.Println(res.GetStdOut())
+						}
+					}
+				}
+			}(signalChan)
+		}
 
 		BeforeAll(func() {
 			var err error
@@ -204,6 +285,8 @@ var _ = Describe("K8sIstioTest", func() {
 				_, err := kubectl.CiliumPolicyAction(helpers.KubeSystemNamespace, policyPath, helpers.KubectlApply, helpers.HelperTimeout)
 				Expect(err).Should(BeNil(), "Unable to create policy %q", policyPath)
 			}
+
+			ciliumBackgroundInfo(signalChan)
 
 			resourceYAMLPaths = []string{bookinfoV2YAML, bookinfoV1YAML}
 			for _, resourcePath := range resourceYAMLPaths {
