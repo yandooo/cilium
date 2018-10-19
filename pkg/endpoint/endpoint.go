@@ -2655,6 +2655,13 @@ func (e *Endpoint) syncPolicyMap() error {
 		e.realizedMapState = make(PolicyMapState)
 	}
 
+	defer func() {
+		e.getLogger().Debug("dumping endpoint realizedMapState after policy sync")
+		for k, v := range e.realizedMapState {
+			e.getLogger().WithField("policyMapKey", k.String()).WithField("policyMapValue", v.ProxyPort).Debug("policy key in datapath")
+		}
+	}()
+
 	if e.desiredMapState == nil {
 		e.desiredMapState = make(PolicyMapState)
 	}
