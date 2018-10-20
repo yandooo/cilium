@@ -106,6 +106,14 @@ var _ = Describe("K8sIstioTest", func() {
 
 		ProvisionInfraPods(kubectl)
 
+		By("Disabling debug mode for Istio test")
+		err := kubectl.CiliumExecAll("cilium config Debug=Disabled")
+		Expect(err).To(BeNil(), "unable to set cilium configuration to Debug=Disabled")
+
+		By("Setting medium monitor aggregation for Istio test")
+		err = kubectl.CiliumExecAll("cilium config MonitorAggregationLevel=Medium")
+		Expect(err).To(BeNil(), "unable to set cilium configuration to MonitorAggregationLevel=Medium")
+
 		By("Creating the istio-system namespace")
 		res := kubectl.NamespaceCreate(istioSystemNamespace)
 		res.ExpectSuccess("unable to create namespace %q", istioSystemNamespace)
@@ -117,7 +125,7 @@ var _ = Describe("K8sIstioTest", func() {
 		// Ignore one-time jobs and Prometheus. All other pods in the
 		// namespaces have an "istio" label.
 		By("Waiting for Istio pods to be ready")
-		err := kubectl.WaitforPods(istioSystemNamespace, "-l istio", 300)
+		err = kubectl.WaitforPods(istioSystemNamespace, "-l istio", 300)
 		Expect(err).To(BeNil(),
 			"Istio pods are not ready after timeout in namespace %q", istioSystemNamespace)
 
@@ -144,6 +152,14 @@ var _ = Describe("K8sIstioTest", func() {
 		By("Deleting the istio-system namespace")
 		_ = kubectl.NamespaceDelete(istioSystemNamespace)
 
+		By("Enabling debug mode after Istio test")
+		err := kubectl.CiliumExecAll("cilium config Debug=Enabled")
+		Expect(err).To(BeNil(), "unable to set cilium configuration to Debug=Enabled")
+
+		By("Setting no monitor aggregation after Istio test")
+		err = kubectl.CiliumExecAll("cilium config MonitorAggregationLevel=None")
+		Expect(err).To(BeNil(), "unable to set cilium configuration to MonitorAggregationLevel=None")
+
 		kubectl.WaitCleanAllTerminatingPods(600)
 	})
 
@@ -169,6 +185,7 @@ var _ = Describe("K8sIstioTest", func() {
 				defer GinkgoRecover()
 				var getPodsErr error
 				var pods []string
+				var ciliumPod string
 				// Only care about k8s2 because that's where endpoints keep going into
 				// not ready state.
 				ciliumPodK8s1, err := kubectl.GetCiliumPodOnNode(helpers.KubeSystemNamespace, helpers.K8s1)
@@ -193,8 +210,11 @@ var _ = Describe("K8sIstioTest", func() {
 					for _, ep := range endpointsK8s1 {
 						By("Checking if pod name %s contains %s", ep.Status.ExternalIdentifiers.PodName, pods[0])
 						if strings.Contains(ep.Status.ExternalIdentifiers.PodName, pods[0]) {
+							By("pod name %s contains %s; setting detailsEp with endpoint ID %s", ep.Status.ExternalIdentifiers.PodName, pods[0], ep.ID)
 							detailsEp = &ep
 							skipOut = true
+							ciliumPod = ciliumPodK8s1
+							break
 						}
 					}
 
@@ -206,8 +226,11 @@ var _ = Describe("K8sIstioTest", func() {
 					for _, ep := range endpointsK8s2 {
 						By("Checking if pod name %s contains %s", ep.Status.ExternalIdentifiers.PodName, pods[0])
 						if strings.Contains(ep.Status.ExternalIdentifiers.PodName, pods[0]) {
+							By("pod name %s contains %s; setting detailsEp with endpoint ID %s", ep.Status.ExternalIdentifiers.PodName, pods[0], ep.ID)
 							detailsEp = &ep
 							skipOut = true
+							ciliumPod = ciliumPodK8s2
+							break
 						}
 					}
 					if !skipOut {
@@ -227,7 +250,7 @@ var _ = Describe("K8sIstioTest", func() {
 					case <-ticker.C:
 						for _, cmd := range cmds {
 							By("Executing command: %s", cmd)
-							res := kubectl.ExecPodCmd(helpers.KubeSystemNamespace, ciliumPodK8s2, cmd)
+							res := kubectl.ExecPodCmd(helpers.KubeSystemNamespace, ciliumPod, cmd)
 							fmt.Println(res.GetStdOut())
 						}
 					}
